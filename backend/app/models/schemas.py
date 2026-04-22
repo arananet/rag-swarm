@@ -65,12 +65,16 @@ class SwarmQueryResponse(BaseModel):
     total_candidates: int
     filtered_count: int
     agents_used: list[str]
+    cache_hit: bool = False
+    cache_similarity: float | None = None
 
 
 class TraditionalQueryResponse(BaseModel):
     query: str
     results: list[RetrievalResult]
     total_results: int
+    cache_hit: bool = False
+    cache_similarity: float | None = None
 
 
 class EvaluationMetrics(BaseModel):
@@ -88,6 +92,19 @@ class CompareResponse(BaseModel):
     swarm_metrics: EvaluationMetrics
     traditional_metrics: EvaluationMetrics
     improvement: dict[str, float]
+    cache_hit: bool = False
+    cache_similarity: float | None = None
+
+
+class CacheStats(BaseModel):
+    enabled: bool
+    entries: int
+    hits: int
+    misses: int
+    hit_rate: float
+    max_size: int
+    ttl_seconds: int
+    similarity_threshold: float
 
 
 class CollectionInfo(BaseModel):

@@ -26,6 +26,7 @@ from app.agents.dispatcher import dispatch_swarm, merge_results
 from app.agents.oracle import OracleAgent
 from app.agents.reranker import deduplicate_results, rerank_results
 from app.agents.traditional import traditional_query
+from app.cache import query_cache
 from app.evaluation.metrics import compute_improvement, compute_metrics
 from app.ingestion.pipeline import ingest_directory
 from app.vectorstore import collection_stats, list_collections
@@ -217,7 +218,7 @@ def ingest_sample_data(collection: str = "default") -> dict[str, Any]:
     Args:
         collection: Target ChromaDB collection name.
     """
-    sample_dir = Path(__file__).parent.parent / "sample_data"
+    sample_dir = Path(__file__).parent.parent.parent / "sample_data"
     if not sample_dir.exists():
         return {"error": "sample_data directory not found"}
 
@@ -239,6 +240,26 @@ def list_all_collections() -> list[dict[str, Any]]:
     """
     names = list_collections()
     return [collection_stats(name) for name in names]
+
+
+@mcp.tool()
+def cache_stats() -> dict[str, Any]:
+    """Return semantic query cache statistics.
+
+    Shows hit/miss counts, hit rate, current entry count, and config
+    (TTL, max size, similarity threshold).
+    """
+    return query_cache.stats()
+
+
+@mcp.tool()
+def cache_clear() -> dict[str, Any]:
+    """Clear all entries from the semantic query cache.
+
+    Returns the number of entries removed.
+    """
+    removed = query_cache.clear()
+    return {"cleared": removed}
 
 
 # ---------------------------------------------------------------------------

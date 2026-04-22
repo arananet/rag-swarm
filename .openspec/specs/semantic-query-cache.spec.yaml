@@ -1,0 +1,57 @@
+# Feature Spec — Semantic Query Cache
+title: "Semantic Query Cache"
+slug: "semantic-query-cache"
+type: feature
+status: approved
+
+author: "Eduardo Arana"
+created_at: "2026-04-22"
+updated_at: "2026-04-22"
+
+description: |
+  Add an in-memory semantic query cache that stores query embeddings alongside
+  their full API responses. When a new query arrives, embed it and compare
+  against cached query vectors via cosine similarity. If similarity exceeds a
+  configurable threshold (default 0.95), return the cached response directly —
+  skipping swarm dispatch, reranking, oracle evaluation, and all Cloudflare
+  API calls. The cache has a configurable TTL and max-size with LRU eviction.
+  Cache metadata (hit/miss, similarity score) is surfaced in the response.
+
+acceptance_criteria:
+  - "Given a previously seen query, when the same query is submitted again, then the cached response is returned without hitting Cloudflare APIs."
+  - "Given a semantically similar query (cosine ≥ threshold), when submitted, then the cached response is returned with cache_hit=true and the similarity score."
+  - "Given a semantically different query (cosine < threshold), when submitted, then a fresh query is executed and its result is cached."
+  - "Given cached entries older than TTL, when a matching query arrives, then the stale entry is evicted and a fresh query runs."
+  - "Given cache_hit in the response, the user can distinguish cached vs fresh results."
+  - "Given a /cache/stats endpoint, when called, then it returns hit count, miss count, entry count, and hit rate."
+  - "Given a /cache/clear endpoint, when called, then all cached entries are evicted."
+
+test_plan:
+  - "Unit test: cache_store and cache_lookup return correct results for exact and similar queries."
+  - "Unit test: entries expire after TTL seconds."
+  - "Unit test: LRU eviction removes oldest entry when max_size is reached."
+  - "Unit test: cosine similarity threshold correctly separates hits from misses."
+  - "Integration test: /query with repeated query returns cache_hit=true on second call."
+  - "Integration test: /cache/stats returns correct hit/miss counts."
+  - "Integration test: /cache/clear empties the cache."
+
+qa_notes: |
+  Test with threshold values 0.90, 0.95, 0.99 to verify sensitivity.
+  Ensure cache works for /query, /query-traditional, and /compare endpoints.
+
+out_of_scope:
+  - "Persistent / disk-backed cache (in-memory only for now)."
+  - "Distributed cache (single-process only)."
+  - "Per-collection cache isolation."
+
+implementation_skill: "backend-pro"
+
+technical_notes: |
+  Use numpy for cosine similarity on the cached embedding vectors.
+  Store cache as a dict keyed by hash, with values containing the query
+  embedding, the response dict, and a timestamp. The embed_text() call
+  for the incoming query is the only API call needed for cache lookups.
+  Thread-safe via threading.Lock.
+
+linked_issues: []
+linked_prs: []

@@ -13,9 +13,12 @@ from app.agents.dispatcher import dispatch_swarm, merge_results
 from app.agents.oracle import OracleAgent
 from app.agents.reranker import deduplicate_results, rerank_results
 from app.agents.traditional import traditional_query
+from app.cache import query_cache
+from app.embeddings import embed_text
 from app.evaluation.metrics import compute_improvement, compute_metrics
 from app.ingestion.pipeline import ingest_directory, ingest_file
 from app.models.schemas import (
+    CacheStats,
     CollectionInfo,
     CompareResponse,
     EvaluationMetrics,
@@ -77,6 +80,12 @@ async def ingest(
 @app.post("/query", response_model=SwarmQueryResponse)
 async def query_swarm(req: QueryRequest):
     """Swarm agent retrieval with oracle evaluation."""
+    # --- Cache lookup ---
+    query_embedding = embed_text(req.query)
+    cached, similarity = query_cache.lookup(req.query, query_embedding)
+    if cached is not None:
+        return SwarmQueryResponse(**{**cached, "cache_hit": True, "cache_similarity": similarity})
+
     # Dispatch to all swarm agents
     agent_results = await dispatch_swarm(
         query=req.query,
@@ -99,7 +108,7 @@ async def query_swarm(req: QueryRequest):
 
     agents_used = list({ar.agent_name for ar in agent_results if ar.results})
 
-    return SwarmQueryResponse(
+    response = SwarmQueryResponse(
         query=req.query,
         results=filtered,
         oracle_verdicts=verdicts,
@@ -108,25 +117,49 @@ async def query_swarm(req: QueryRequest):
         agents_used=agents_used,
     )
 
+    # --- Cache store ---
+    query_cache.store(req.query, query_embedding, response.model_dump())
+
+    return response
+
 
 @app.post("/query-traditional", response_model=TraditionalQueryResponse)
 async def query_traditional(req: QueryRequest):
     """Traditional single-retriever RAG baseline."""
+    # --- Cache lookup ---
+    query_embedding = embed_text(req.query)
+    cache_key = f"trad:{req.query}"
+    cached, similarity = query_cache.lookup(cache_key, query_embedding)
+    if cached is not None:
+        return TraditionalQueryResponse(**{**cached, "cache_hit": True, "cache_similarity": similarity})
+
     results = traditional_query(
         query=req.query,
         collection=req.collection,
         top_k=req.top_k,
     )
-    return TraditionalQueryResponse(
+    response = TraditionalQueryResponse(
         query=req.query,
         results=results,
         total_results=len(results),
     )
 
+    # --- Cache store ---
+    query_cache.store(cache_key, query_embedding, response.model_dump())
+
+    return response
+
 
 @app.post("/compare", response_model=CompareResponse)
 async def compare(req: QueryRequest):
     """Side-by-side comparison of swarm vs traditional RAG with metrics."""
+    # --- Cache lookup ---
+    query_embedding = embed_text(req.query)
+    cache_key = f"compare:{req.query}"
+    cached, similarity = query_cache.lookup(cache_key, query_embedding)
+    if cached is not None:
+        return CompareResponse(**{**cached, "cache_hit": True, "cache_similarity": similarity})
+
     # Run swarm query
     agent_results = await dispatch_swarm(
         query=req.query, collection=req.collection, top_k=req.top_k
@@ -164,7 +197,7 @@ async def compare(req: QueryRequest):
 
     improvement = compute_improvement(swarm_metrics, trad_metrics)
 
-    return CompareResponse(
+    response = CompareResponse(
         query=req.query,
         swarm=swarm_response,
         traditional=trad_response,
@@ -172,6 +205,24 @@ async def compare(req: QueryRequest):
         traditional_metrics=trad_metrics,
         improvement=improvement,
     )
+
+    # --- Cache store ---
+    query_cache.store(cache_key, query_embedding, response.model_dump())
+
+    return response
+
+
+@app.get("/cache/stats", response_model=CacheStats)
+async def cache_stats():
+    """Return cache statistics."""
+    return CacheStats(**query_cache.stats())
+
+
+@app.delete("/cache/clear")
+async def cache_clear():
+    """Clear all cached entries."""
+    removed = query_cache.clear()
+    return {"cleared": removed}
 
 
 @app.get("/collections", response_model=list[CollectionInfo])

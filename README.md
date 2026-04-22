@@ -21,9 +21,15 @@ flowchart TB
         TC & PC & IC & CC --> VDB[(ChromaDB<br/>Vector Store)]
     end
 
+    subgraph Cache["Semantic Query Cache"]
+        Q[User Query] --> EMB[Embed Query]
+        EMB --> CK{Cosine sim ≥ 0.95?}
+        CK -- "cache hit" --> CR[Cached Response<br/>instant return]
+        CK -- "cache miss" --> D
+    end
+
     subgraph Swarm["Swarm Agent Pool"]
-        Q[User Query] --> D[Dispatcher]
-        D --> TA[TextAgent]
+        D[Dispatcher] --> TA[TextAgent]
         D --> CA[CodeAgent]
         D --> IA[ImageAgent]
         D --> TBA[TableAgent]
@@ -34,6 +40,7 @@ flowchart TB
         TA & CA & IA & TBA --> O[Oracle Agent<br/>LLM + Embeddings]
         O --> |"score, reason & filter"| R[Filtered Results +<br/>Human-Readable Verdicts]
         O --> |"metrics"| E[Evaluation<br/>Precision · Recall · NDCG · MRR]
+        R --> CS[Store in Cache]
     end
 
     subgraph UI["React UI"]
@@ -59,6 +66,7 @@ flowchart TB
 - **Visual proof** — 2D vector projections, similarity heatmaps, side-by-side comparison
 - **Enterprise-ready** — configurable agent pools, async processing, evaluation pipeline
 - **Cloudflare Workers AI** — all inference (embeddings, LLM, VLM, re-ranker) via Cloudflare REST API — no local GPU needed
+- **Semantic query cache** — in-memory cache keyed by query embedding cosine similarity; repeat or near-duplicate queries skip all downstream API calls and return instantly
 
 ## Quick Start
 
@@ -86,6 +94,256 @@ npm install && npm run dev
 | `/query-traditional` | POST | Single-retriever baseline for comparison |
 | `/compare` | POST | Side-by-side swarm vs traditional with metrics |
 | `/collections` | GET | List indexed collections and stats |
+| `/cache/stats` | GET | Cache hit/miss counts, hit rate, config |
+| `/cache/clear` | DELETE | Evict all cached entries |
+
+### Example: Ingest sample data
+
+```bash
+curl -s -X POST "http://localhost:8000/ingest-sample" \
+  -H "Content-Type: application/json" \
+  -d '{"collection": "default"}' | python3 -m json.tool
+```
+
+```json
+{
+    "collection": "default",
+    "documents_processed": 7,
+    "chunks_created": 32,
+    "modalities": ["code", "image", "table", "text"]
+}
+```
+
+### Example: Swarm query with oracle evaluation
+
+```bash
+curl -s -X POST "http://localhost:8000/query" \
+  -H "Content-Type: application/json" \
+  -d '{"query": "what is swarm intelligence?", "collection": "default", "top_k": 10}' \
+  | python3 -m json.tool
+```
+
+<details>
+<summary>Response (truncated)</summary>
+
+```json
+{
+    "query": "what is swarm intelligence?",
+    "results": [
+        {
+            "chunk_id": "text_d79e510f285e",
+            "content": "# Multi-Agent Systems and Swarm Intelligence\n\n## Swarm Intelligence\n\nSwarm intelligence refers to the collective behavio...",
+            "modality": "text",
+            "score": 1,
+            "metadata": {
+                "filename": "swarm-intelligence.md",
+                "modality": "text",
+                "embed_model": "@cf/baai/bge-base-en-v1.5"
+            },
+            "agent": "TextAgent"
+        },
+        {
+            "chunk_id": "text_c500c9b79d38",
+            "content": "— The collective behavior is more capable than the sum of individual agents. ## Swarm RAG Architecture...",
+            "modality": "text",
+            "score": 0.5402,
+            "metadata": {
+                "filename": "swarm-intelligence.md",
+                "modality": "text"
+            },
+            "agent": "TextAgent"
+        },
+        {
+            "chunk_id": "code_8fa0f6a72c45",
+            "content": "\"\"\"Example: Swarm RAG retrieval agent implementation...",
+            "modality": "code",
+            "score": 0.5219,
+            "metadata": {
+                "filename": "example_agent.py",
+                "modality": "code"
+            },
+            "agent": "CodeAgent"
+        }
+    ],
+    "oracle_verdicts": [
+        {
+            "chunk_id": "text_d79e510f285e",
+            "relevance_score": 1,
+            "reasoning": "This chunk is RELEVANT as it directly answers the query with a clear definition of swarm intelligence and provides supporting information on its key principles.",
+            "passed": true
+        },
+        {
+            "chunk_id": "text_c500c9b79d38",
+            "relevance_score": 0.5241,
+            "reasoning": "This chunk is RELEVANT as it directly mentions 'Swarm RAG' and describes its application in the context of knowledge graph traversal during retrieval.",
+            "passed": true
+        },
+        {
+            "chunk_id": "code_8fa0f6a72c45",
+            "relevance_score": 0.5137,
+            "reasoning": "This chunk is RELEVANT as it provides a specific definition and example of swarm intelligence, demonstrating a strong semantic match with the query.",
+            "passed": true
+        }
+    ],
+    "total_candidates": 13,
+    "filtered_count": 10,
+    "agents_used": ["ImageAgent", "CodeAgent", "TextAgent", "TableAgent"]
+}
+```
+
+</details>
+
+**What happened:** The dispatcher fanned out the query to 4 specialized agents running in parallel. They returned 13 candidate chunks from across all modalities. The oracle evaluated each one — re-scoring via embeddings and LLM reasoning — and returned 10 results with human-readable relevance verdicts.
+
+### Example: Swarm vs Traditional comparison
+
+```bash
+curl -s -X POST "http://localhost:8000/compare" \
+  -H "Content-Type: application/json" \
+  -d '{"query": "how does the oracle agent work?", "collection": "default", "top_k": 5}' \
+  | python3 -m json.tool
+```
+
+<details>
+<summary>Response (truncated)</summary>
+
+```json
+{
+    "query": "how does the oracle agent work?",
+    "swarm": {
+        "results": [
+            {
+                "content": "RAG ### Oracle Agent The oracle is the quality gate of the swarm. It receives all candidate results and evaluates each one against the user's original intent...",
+                "modality": "text",
+                "score": 0.9572,
+                "agent": "TextAgent"
+            },
+            {
+                "content": "knowledge organization while deploying swarm agents for retrieval across the structured wiki pages. The oracle agent then serves as the 'lint' layer...",
+                "modality": "text",
+                "score": 0.9096,
+                "agent": "TextAgent"
+            }
+        ],
+        "oracle_verdicts": [
+            {
+                "relevance_score": 0.9572,
+                "reasoning": "This chunk is RELEVANT as it directly addresses the query by explaining the functionality and evaluation process of the Oracle Agent.",
+                "passed": true
+            }
+        ],
+        "total_candidates": 13,
+        "filtered_count": 10,
+        "agents_used": ["ImageAgent", "CodeAgent", "TextAgent", "TableAgent"]
+    },
+    "traditional": {
+        "results": [
+            {
+                "content": "RAG ### Oracle Agent The oracle is the quality gate of the swarm...",
+                "modality": "text",
+                "score": 0.7810
+            }
+        ],
+        "total_results": 5
+    },
+    "swarm_metrics": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "ndcg": 1.0,
+        "mrr": 1.0,
+        "avg_relevance": 0.6146
+    },
+    "traditional_metrics": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "ndcg": 1.0,
+        "mrr": 1.0,
+        "avg_relevance": 0.6988
+    },
+    "improvement": {
+        "precision_pct": 0,
+        "recall_pct": 0,
+        "ndcg_pct": 0,
+        "mrr_pct": 0,
+        "avg_relevance_pct": -12.05
+    }
+}
+```
+
+</details>
+
+**What happened:** Both approaches found the right answers (precision/recall/NDCG/MRR all 1.0). The swarm approach searched across 4 agents and returned 10 results from 13 candidates, while traditional returned 5. The swarm's oracle evaluates and explains every result — the tradeoff is slightly lower average relevance (-12%) because the swarm surfaces more results across modalities, including less-central matches that still pass the relevance threshold.
+
+---
+
+## Semantic Query Cache
+
+Every query endpoint (`/query`, `/query-traditional`, `/compare`) is backed by an in-memory **semantic cache**. When a query arrives, its embedding is compared against cached query vectors using cosine similarity. If similarity ≥ threshold (default **0.95**), the cached response is returned instantly — skipping swarm dispatch, reranking, oracle evaluation, and all Cloudflare API calls.
+
+```mermaid
+flowchart LR
+    Q[Incoming Query] --> E[Embed Query<br/>single API call]
+    E --> C{Cosine sim ≥ 0.95<br/>against cache?}
+    C -- Yes --> HIT[Return cached response<br/>cache_hit: true]
+    C -- No --> FULL[Full pipeline<br/>swarm → rerank → oracle]
+    FULL --> S[Store in cache]
+    S --> R[Return fresh response]
+```
+
+### Configuration
+
+Set via environment variables in `.env`:
+
+| Variable | Default | Description |
+|---|---|---|
+| `CACHE_ENABLED` | `true` | Enable/disable the cache globally |
+| `CACHE_SIMILARITY_THRESHOLD` | `0.95` | Cosine similarity threshold for cache hits (0.0–1.0) |
+| `CACHE_TTL_SECONDS` | `3600` | Time-to-live per entry (seconds) |
+| `CACHE_MAX_SIZE` | `256` | Maximum cached entries (LRU eviction) |
+
+### Cache-aware responses
+
+When a response comes from cache, two extra fields appear:
+
+```json
+{
+    "cache_hit": true,
+    "cache_similarity": 0.9823,
+    "query": "what is swarm intelligence?",
+    "results": ["..."]
+}
+```
+
+### Cache management endpoints
+
+```bash
+# Check cache statistics
+curl -s http://localhost:8000/cache/stats | python3 -m json.tool
+```
+
+```json
+{
+    "enabled": true,
+    "entries": 3,
+    "hits": 7,
+    "misses": 4,
+    "hit_rate": 0.6364,
+    "max_size": 256,
+    "ttl_seconds": 3600,
+    "similarity_threshold": 0.95
+}
+```
+
+```bash
+# Clear all cached entries
+curl -s -X DELETE http://localhost:8000/cache/clear | python3 -m json.tool
+```
+
+```json
+{
+    "cleared": 3
+}
+```
 
 ---
 
@@ -115,6 +373,8 @@ npx -y @modelcontextprotocol/inspector
 | `rag_compare` | Side-by-side comparison with evaluation metrics (precision, recall, NDCG, MRR) and percentage improvement. |
 | `ingest_sample_data` | Ingest bundled `sample_data/` directory for demo. |
 | `list_all_collections` | List all ChromaDB collections with document counts and modality breakdowns. |
+| `cache_stats` | Return semantic query cache statistics (hits, misses, hit rate, config). |
+| `cache_clear` | Clear all entries from the semantic query cache. |
 
 ### Resources
 
@@ -155,10 +415,12 @@ A root [`mcp.json`](mcp.json) is also provided for generic MCP hosts.
 ## How It Works
 
 1. **Ingest** — Documents are chunked by modality (text, code, image, table, PDF), embedded via Cloudflare Workers AI, and stored in ChromaDB with provenance metadata
-2. **Query** — The dispatcher fans out the query to specialized swarm agents running in parallel
-3. **Deduplicate & Re-rank** — Overlapping results are merged; a cross-encoder re-ranker orders by relevance
-4. **Oracle** — A two-stage evaluator (fast embedding similarity + LLM reasoning) scores every result, explains why it's relevant or not in plain language, flags provenance drift, and filters noise — the user sees both the results and the oracle's reasoning
-5. **Compare** — Evaluation metrics (precision, recall, NDCG, MRR) prove swarm retrieval outperforms single-retriever RAG
+2. **Query** — The incoming query is embedded (single API call) and checked against the **semantic cache**. If a similar query was seen before (cosine similarity ≥ 0.95), the cached response is returned instantly — skipping steps 3–5
+3. **Dispatch** — On cache miss, the dispatcher fans out the query to specialized swarm agents running in parallel
+4. **Deduplicate & Re-rank** — Overlapping results are merged; a cross-encoder re-ranker orders by relevance
+5. **Oracle** — A two-stage evaluator (fast embedding similarity + LLM reasoning) scores every result, explains why it's relevant or not in plain language, flags provenance drift, and filters noise — the user sees both the results and the oracle's reasoning
+6. **Cache & Return** — The fresh response is stored in the cache (with TTL + LRU eviction) and returned to the user
+7. **Compare** — Evaluation metrics (precision, recall, NDCG, MRR) prove swarm retrieval outperforms single-retriever RAG
 
 ---
 

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+import time
 from functools import lru_cache
 
 import httpx
@@ -23,8 +24,10 @@ VLM_MODEL = "@cf/llava-hf/llava-1.5-7b-hf"             # Image-to-text captionin
 RERANKER_MODEL = "@cf/baai/bge-reranker-base"           # Re-ranking pairs
 
 EMBEDDING_DIM = 768
-_MAX_BATCH = 100  # Cloudflare batch limit per request
+_MAX_BATCH = 20  # Keep small to avoid CF free-tier rate limits
 _TIMEOUT = 30.0
+_MAX_RETRIES = 6
+_RETRY_BACKOFF = 3.0  # seconds, doubles each retry
 
 
 def _headers() -> dict[str, str]:
@@ -35,6 +38,19 @@ def _cf_url(model: str) -> str:
     return f"{CF_BASE_URL}/{model}"
 
 
+def _post_with_retry(url: str, json: dict, timeout: float = _TIMEOUT) -> httpx.Response:
+    """POST with exponential backoff on 429 rate-limit responses."""
+    for attempt in range(_MAX_RETRIES):
+        resp = httpx.post(url, headers=_headers(), json=json, timeout=timeout)
+        if resp.status_code != 429:
+            resp.raise_for_status()
+            return resp
+        wait = _RETRY_BACKOFF * (2 ** attempt)
+        time.sleep(wait)
+    resp.raise_for_status()  # raise on final failure
+    return resp
+
+
 # ---------- Text Embeddings via Cloudflare Workers AI ----------
 
 
@@ -43,16 +59,16 @@ def embed_texts(texts: list[str]) -> list[list[float]]:
     if not texts:
         return []
     all_embeddings: list[list[float]] = []
-    # Batch in chunks of _MAX_BATCH
+    # Batch in chunks of _MAX_BATCH with inter-batch delay
     for i in range(0, len(texts), _MAX_BATCH):
+        if i > 0:
+            time.sleep(1.0)  # avoid burst rate-limiting
         batch = texts[i : i + _MAX_BATCH]
-        resp = httpx.post(
+        resp = _post_with_retry(
             _cf_url(EMBEDDING_MODEL),
-            headers=_headers(),
             json={"text": batch},
             timeout=_TIMEOUT,
         )
-        resp.raise_for_status()
         data = resp.json()
         vectors = data.get("result", {}).get("data", [])
         all_embeddings.extend(vectors)
@@ -69,32 +85,28 @@ def embed_text(text: str) -> list[float]:
 
 def llm_generate(prompt: str, max_tokens: int = 512) -> str:
     """Generate text using Cloudflare Workers AI LLM."""
-    resp = httpx.post(
+    resp = _post_with_retry(
         _cf_url(LLM_MODEL),
-        headers=_headers(),
         json={
             "prompt": prompt,
             "max_tokens": max_tokens,
         },
         timeout=_TIMEOUT * 2,
     )
-    resp.raise_for_status()
     data = resp.json()
     return data.get("result", {}).get("response", "")
 
 
 def llm_chat(messages: list[dict], max_tokens: int = 512) -> str:
     """Chat-style LLM inference with system/user/assistant messages."""
-    resp = httpx.post(
+    resp = _post_with_retry(
         _cf_url(LLM_MODEL),
-        headers=_headers(),
         json={
             "messages": messages,
             "max_tokens": max_tokens,
         },
         timeout=_TIMEOUT * 2,
     )
-    resp.raise_for_status()
     data = resp.json()
     return data.get("result", {}).get("response", "")
 
@@ -104,9 +116,8 @@ def llm_chat(messages: list[dict], max_tokens: int = 512) -> str:
 
 def caption_image(image_b64: str, prompt: str = "Describe this image in detail.") -> str:
     """Generate a caption for a base64-encoded image using the VLM."""
-    resp = httpx.post(
+    resp = _post_with_retry(
         _cf_url(VLM_MODEL),
-        headers=_headers(),
         json={
             "image": image_b64,
             "prompt": prompt,
@@ -114,7 +125,6 @@ def caption_image(image_b64: str, prompt: str = "Describe this image in detail."
         },
         timeout=_TIMEOUT * 2,
     )
-    resp.raise_for_status()
     data = resp.json()
     return data.get("result", {}).get("description", "")
 
@@ -129,19 +139,20 @@ def rerank_pairs(query: str, passages: list[str]) -> list[float]:
     """
     if not passages:
         return []
-    # The re-ranker takes pairs of (query, passage) and returns similarity scores
-    resp = httpx.post(
+    # CF reranker expects: {"query": str, "contexts": [{"text": str}, ...]}
+    contexts = [{"text": p} for p in passages]
+    resp = _post_with_retry(
         _cf_url(RERANKER_MODEL),
-        headers=_headers(),
-        json={"text": query, "text_pair": passages},
+        json={"query": query, "contexts": contexts},
         timeout=_TIMEOUT,
     )
-    resp.raise_for_status()
     data = resp.json()
-    # bge-reranker-base returns list of {label, score} dicts
-    results = data.get("result", [])
-    if isinstance(results, list) and results and isinstance(results[0], dict):
-        return [r.get("score", 0.0) for r in results]
+    # Response: {"result": {"response": [{"id": 0, "score": 0.17}, ...]}}
+    response_list = data.get("result", {}).get("response", [])
+    if response_list:
+        # Results may not be in original order — sort by id to align with passages
+        score_map = {r["id"]: r.get("score", 0.0) for r in response_list}
+        return [score_map.get(i, 0.0) for i in range(len(passages))]
     return [0.0] * len(passages)
 
 
