@@ -1,5 +1,12 @@
 # rag-swarm
 
+[![Spec Check](https://github.com/arananet/rag-swarm/actions/workflows/spec-check.yml/badge.svg)](https://github.com/arananet/rag-swarm/actions/workflows/spec-check.yml)
+[![CodeQL](https://github.com/arananet/rag-swarm/actions/workflows/codeql.yml/badge.svg)](https://github.com/arananet/rag-swarm/actions/workflows/codeql.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Python 3.13+](https://img.shields.io/badge/python-3.13+-blue.svg)](https://www.python.org/)
+[![MCP 2025-11-25](https://img.shields.io/badge/MCP-2025--11--25-8A2BE2)](https://modelcontextprotocol.io/)
+[![Cloudflare Workers AI](https://img.shields.io/badge/powered%20by-Cloudflare%20Workers%20AI-F38020)](https://developers.cloudflare.com/workers-ai/)
+
 **Swarm Agent RAG** — A multimodal retrieval-augmented generation system where specialized swarm agents search a vector database in parallel, and an LLM-powered oracle evaluates every result's relevance, explains its reasoning back to the user, and filters out noise — so you only see what actually answers your question.
 
 Exposed as both a REST API and an **MCP server** (Model Context Protocol, spec 2025-11-25), so any MCP-compatible host — Claude Desktop, VS Code Copilot, Claude Code — can query the knowledge base directly.
