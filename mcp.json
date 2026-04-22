@@ -1,0 +1,15 @@
+{
+  "mcpServers": {
+    "rag-swarm": {
+      "command": "uv",
+      "args": [
+        "--directory",
+        "/ABSOLUTE/PATH/TO/rag-swarm/backend",
+        "run",
+        "python",
+        "-m",
+        "app.mcp_server"
+      ]
+    }
+  }
+}

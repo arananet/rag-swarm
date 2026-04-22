@@ -1,0 +1,22 @@
+# Core
+chromadb>=0.5.0
+fastapi>=0.111.0
+uvicorn[standard]>=0.30.0
+python-multipart>=0.0.9
+pydantic>=2.7.0
+python-dotenv>=1.0.0
+
+# HTTP client for Cloudflare Workers AI
+httpx>=0.27.0
+
+# MCP (Model Context Protocol) server — spec 2025-11-25
+mcp[cli]>=1.27.0
+
+# Document processing
+Pillow>=10.3.0
+PyPDF2>=3.0.0
+numpy>=1.26.0
+
+# Testing
+pytest>=8.2.0
+pytest-asyncio>=0.23.0

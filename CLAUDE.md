@@ -60,14 +60,14 @@ After configuration is complete:
 
    | Token | Replace with | Files |
    |---|---|---|
-   | `{{PROJECT_NAME}}` | Project name | README, SECURITY, CONTRIBUTING, SUPPORT, CHANGELOG, devcontainer |
-   | `{{GITHUB_OWNER}}` | GitHub org/user | CONTRIBUTING, CHANGELOG, CODEOWNERS, ISSUE_TEMPLATE/config.yml |
-   | `{{TEAM_NAME}}` | GitHub team slug | CODEOWNERS |
-   | `{{SECURITY_CONTACT}}` | Security contact email | SECURITY, CODE_OF_CONDUCT, SUPPORT |
-   | `{{PROJECT_DESCRIPTION}}` | One-line description | README |
+   | `rag-swarm` | Project name | README, SECURITY, CONTRIBUTING, SUPPORT, CHANGELOG, devcontainer |
+   | `arananet` | GitHub org/user | CONTRIBUTING, CHANGELOG, CODEOWNERS, ISSUE_TEMPLATE/config.yml |
+   | `Eduardo Arana` | GitHub team slug | CODEOWNERS |
+   | `security@example.com` | Security contact email | SECURITY, CODE_OF_CONDUCT, SUPPORT |
+   | `Swarm agent RAG system with multi-agent vector retrieval, oracle evaluation, and visual similarity UI` | One-line description | README |
 
 3. Review `.github/CODEOWNERS` — add finer-grained per-path owners as the
-   codebase grows. Default ownership is the team from `{{TEAM_NAME}}`.
+   codebase grows. Default ownership is the team from `Eduardo Arana`.
 
 4. Point the user to `docs/BRANCH_PROTECTION.md` to configure required
    status checks (OpenSpec PR Check, CodeQL, gitleaks, dependency-review)

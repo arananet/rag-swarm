@@ -1,0 +1,69 @@
+# Feature Spec — Multimodal Swarm RAG System
+title: "Multimodal Swarm RAG with Oracle Evaluation"
+slug: "multimodal-swarm-rag"
+type: feature
+status: approved
+
+author: "Eduardo Arana"
+created_at: "2026-04-22"
+updated_at: "2026-04-22"
+
+description: |
+  A swarm-based Retrieval-Augmented Generation system inspired by Karpathy's LLM Wiki
+  approach. Instead of a single retriever, an army of specialized agents searches a
+  ChromaDB vector database for specific topics. An oracle agent evaluates whether the
+  returned information matches the user's prompt and intent, scoring relevance and
+  filtering hallucinations. Supports multimodal ingestion (text, PDF, images, tables,
+  code) with modality-specific chunking and embedding. A React UI visualizes semantic
+  similarity, vector search results, and comparison against traditional single-retriever
+  RAG, proving the swarm approach is superior. Enterprise scalability is addressed via
+  configurable agent pools, async processing, and evaluation metrics.
+
+acceptance_criteria:
+  - "AC1: System ingests text (.txt, .md), PDF, images (.png, .jpg), and code files, storing them in ChromaDB with modality-specific metadata"
+  - "AC2: Swarm of specialized agents (TextAgent, CodeAgent, ImageAgent, TableAgent) each search the vector DB independently for their domain"
+  - "AC3: Oracle agent receives results from all swarm agents, scores relevance (0-1) against user query, and returns only results above threshold"
+  - "AC4: API exposes /ingest, /query, /query-traditional (single-retriever baseline), and /compare endpoints"
+  - "AC5: React UI displays query results with semantic similarity scores, vector space visualization (2D projection), and side-by-side comparison of swarm vs traditional RAG"
+  - "AC6: Evaluation pipeline computes precision, recall, NDCG, and MRR metrics for swarm vs traditional retrieval"
+  - "AC7: System runs locally with ChromaDB, no external API keys required for core vector search (LLM features use configurable provider)"
+
+test_plan:
+  - "Unit test: multimodal document ingestion — each format produces correct chunks and embeddings in ChromaDB"
+  - "Unit test: each swarm agent retrieves only documents matching its modality specialization"
+  - "Unit test: oracle agent filters results below relevance threshold and ranks by score"
+  - "Unit test: evaluation metrics (precision, recall, NDCG, MRR) compute correctly against known ground truth"
+  - "Integration test: full query pipeline — ingest docs, run swarm query, get oracle-filtered results"
+  - "Integration test: /compare endpoint returns both swarm and traditional results with evaluation metrics"
+
+qa_notes: |
+  - Test with at least 3 document types (markdown, PDF, image with description)
+  - Verify the UI renders vector projections and comparison charts
+  - Verify ChromaDB persists data across server restarts
+  - Test with 100+ documents to validate scalability claims
+
+out_of_scope:
+  - "Production deployment (Kubernetes, cloud hosting)"
+  - "Authentication and authorization"
+  - "Real-time streaming responses"
+  - "Fine-tuning embedding models"
+
+implementation_skill: null
+
+technical_notes: |
+  Architecture:
+  - Backend: FastAPI (Python)
+  - Vector DB: ChromaDB (local, persistent)
+  - Embeddings: sentence-transformers (all-MiniLM-L6-v2) for text, CLIP for images
+  - Swarm: Async agent pool with modality-specific retrieval strategies
+  - Oracle: Cosine similarity + cross-encoder reranking
+  - UI: React + D3.js for vector space visualization
+  - Evaluation: RAGAS-inspired metrics pipeline
+  
+  Karpathy-inspired elements:
+  - Three-layer architecture (raw sources → processed wiki/chunks → query layer)
+  - Ingest/Query/Lint operations mapped to swarm agent lifecycle
+  - Knowledge compounding via oracle feedback loop
+
+linked_issues: []
+linked_prs: []

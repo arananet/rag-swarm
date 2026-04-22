@@ -1,0 +1,54 @@
+# Feature Spec — MCP Server for RAG Swarm
+title: "MCP Server capability for RAG Swarm"
+slug: "mcp-server"
+type: feature
+status: approved
+
+author: "Eduardo Arana"
+created_at: "2026-04-22"
+updated_at: "2026-04-22"
+
+description: |
+  Expose the RAG Swarm system as a Model Context Protocol (MCP) server
+  (spec version 2025-11-25) so that any MCP-compatible host (Claude Desktop,
+  VS Code Copilot, Claude Code, custom clients) can query, ingest, and
+  compare retrieval approaches through the standardized MCP interface.
+  Uses the official Python SDK (`mcp` >=1.27.0) with FastMCP, supporting
+  both stdio and Streamable HTTP transports.
+
+acceptance_criteria:
+  - "AC-1: An MCP server exposes tools (rag_query, rag_query_traditional, rag_compare, ingest_sample_data, list_collections) discoverable via tools/list."
+  - "AC-2: An MCP server exposes resources (rag://collections, rag://collection/{name}) discoverable via resources/list."
+  - "AC-3: An MCP server exposes prompts (rag-search, rag-compare) discoverable via prompts/list."
+  - "AC-4: The server runs via stdio transport (uv run / python) and Streamable HTTP transport."
+  - "AC-5: MCP manifest files are provided for Claude Desktop (claude_desktop_config.json snippet) and VS Code (.vscode/mcp.json)."
+  - "AC-6: Protocol version negotiated is 2025-11-25."
+  - "AC-7: The mcp Python package is added to requirements.txt."
+
+test_plan:
+  - "Unit test: rag_query tool returns results with chunk_id, content, score, modality, and oracle verdicts."
+  - "Unit test: list_collections tool returns collection names and counts."
+  - "Unit test: resources rag://collections returns valid JSON with collection info."
+  - "Integration test: MCP server starts without error on stdio transport."
+
+qa_notes: |
+  Test with MCP Inspector: `npx -y @modelcontextprotocol/inspector`
+  Connect to http://localhost:8001/mcp for Streamable HTTP transport.
+  Verify tools, resources, and prompts are listed in the inspector UI.
+
+out_of_scope:
+  - "OAuth / authentication on the MCP server (can be added later)."
+  - "MCP client implementation — only the server side."
+  - "File upload via MCP (ingest only supports sample data and directory paths)."
+
+implementation_skill: null
+
+technical_notes: |
+  - Uses FastMCP from `mcp.server.fastmcp` (Python SDK v1.27.0+).
+  - Can be mounted alongside the existing FastAPI app or run standalone.
+  - Streamable HTTP recommended for production (`stateless_http=True`, `json_response=True`).
+  - stdio for local dev / Claude Desktop integration.
+  - Protocol version: 2025-11-25 (latest as of implementation date).
+
+linked_issues: []
+linked_prs: []

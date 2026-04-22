@@ -1,50 +1,172 @@
-# {{PROJECT_NAME}}
+# rag-swarm
 
-{{PROJECT_DESCRIPTION}}
+**Swarm Agent RAG** — A multimodal retrieval-augmented generation system where specialized swarm agents search a vector database in parallel, and an LLM-powered oracle evaluates every result's relevance, explains its reasoning back to the user, and filters out noise — so you only see what actually answers your question.
 
----
+Exposed as both a REST API and an **MCP server** (Model Context Protocol, spec 2025-11-25), so any MCP-compatible host — Claude Desktop, VS Code Copilot, Claude Code — can query the knowledge base directly.
 
-## What is OpenSpec?
-
-OpenSpec is a spec-driven development framework built into this repo. Every feature or bugfix starts with a spec file — no spec, no code. Specs define acceptance criteria, test plans, and the domain skill to use during implementation.
-
-**Layers of enforcement:**
-
-| Layer | When | What |
-|---|---|---|
-| Git hook (local) | `git commit` | Blocks commits with source changes but no spec |
-| Pre-commit framework (optional) | `git commit` | Runs gitleaks, yamllint, markdownlint, shellcheck |
-| CI — deterministic | Every PR | Validates spec fields, status, test_plan, and runs the test suite |
-| CI — agentic | Every PR | AI checks if the implementation actually satisfies the spec |
-| CI — security | Every PR | CodeQL SAST, gitleaks secret scan, dependency review |
-| CI — supply chain | Every release | CycloneDX SBOM generation |
+Inspired by [Karpathy's LLM Wiki](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f) three-layer architecture, adapted for swarm-based vector retrieval with enterprise evaluation.
 
 ---
 
-## How it works
+## Architecture
 
 ```mermaid
-flowchart TD
-    A([New feature or bugfix]) --> B{Spec exists?}
-    B -- No --> C["/openspec-scaffold\nor: gh openspec scaffold"]
-    C --> D[Fill in acceptance_criteria\nand test_plan]
-    D --> E{status = review?}
-    B -- Yes --> E
-    E -- draft --> D
-    E -- review/approved --> F["/openspec-implement\ninvokes domain skill if set"]
-    F --> G[Write tests per test_plan]
-    G --> H([Open PR])
-    H --> I[spec-check.yml\ndeterministic gate]
-    H --> J[spec-ai-review.yml\nagentic alignment check]
-    I --> K{All checks pass?}
-    J --> K
-    K -- No --> F
-    K -- Yes --> L([Merge])
+flowchart TB
+    subgraph Ingestion
+        U[User uploads<br/>text / PDF / image / code] --> IP[Ingest Pipeline]
+        IP --> TC[Text Chunker]
+        IP --> PC[PDF Extractor]
+        IP --> IC[Image Captioner<br/>CLIP embeddings]
+        IP --> CC[Code Chunker]
+        TC & PC & IC & CC --> VDB[(ChromaDB<br/>Vector Store)]
+    end
+
+    subgraph Swarm["Swarm Agent Pool"]
+        Q[User Query] --> D[Dispatcher]
+        D --> TA[TextAgent]
+        D --> CA[CodeAgent]
+        D --> IA[ImageAgent]
+        D --> TBA[TableAgent]
+        TA & CA & IA & TBA --> |"parallel search"| VDB
+    end
+
+    subgraph Oracle["Oracle Evaluation"]
+        TA & CA & IA & TBA --> O[Oracle Agent<br/>LLM + Embeddings]
+        O --> |"score, reason & filter"| R[Filtered Results +<br/>Human-Readable Verdicts]
+        O --> |"metrics"| E[Evaluation<br/>Precision · Recall · NDCG · MRR]
+    end
+
+    subgraph UI["React UI"]
+        R --> VS[Vector Space 2D]
+        R --> SC[Similarity Scores]
+        E --> CMP[Swarm vs Traditional<br/>Comparison]
+    end
+
+    subgraph MCP["MCP Server (2025-11-25)"]
+        R --> MCT[Tools: rag_query · rag_compare · ...]
+        R --> MCR[Resources: rag://collections]
+        R --> MCP2[Prompts: rag-search · rag-compare]
+        MCT --> HOST[Claude Desktop · VS Code · Any MCP Host]
+    end
 ```
+
+## Key Features
+
+- **Multimodal ingestion** — text, PDF, images, code files with modality-specific chunking
+- **Swarm retrieval** — parallel specialized agents instead of single-retriever RAG
+- **Oracle evaluation** — two-stage (embedding + LLM) relevance scoring that explains its reasoning back to the user, filters noise, and flags provenance drift
+- **MCP server** — Model Context Protocol (2025-11-25) interface with tools, resources, and prompts — plug into Claude Desktop, VS Code, or any MCP host
+- **Visual proof** — 2D vector projections, similarity heatmaps, side-by-side comparison
+- **Enterprise-ready** — configurable agent pools, async processing, evaluation pipeline
+- **Cloudflare Workers AI** — all inference (embeddings, LLM, VLM, re-ranker) via Cloudflare REST API — no local GPU needed
+
+## Quick Start
+
+```bash
+# 1. Install backend
+cd backend
+pip install -r requirements.txt
+
+# 2. Start the API server
+uvicorn app.main:app --reload --port 8000
+
+# 3. Install and start the UI
+cd ../frontend
+npm install && npm run dev
+
+# 4. Open http://localhost:5173
+```
+
+### API Endpoints
+
+| Endpoint | Method | Description |
+|---|---|---|
+| `/ingest` | POST | Upload and index documents (multimodal) |
+| `/query` | POST | Swarm agent retrieval with oracle evaluation |
+| `/query-traditional` | POST | Single-retriever baseline for comparison |
+| `/compare` | POST | Side-by-side swarm vs traditional with metrics |
+| `/collections` | GET | List indexed collections and stats |
 
 ---
 
-## Quick start
+## MCP Server
+
+The RAG Swarm system is also exposed as an **MCP server** (Model Context Protocol, spec 2025-11-25) so any compatible host can use it as a tool.
+
+### Quick start
+
+```bash
+# stdio transport (Claude Desktop / Claude Code)
+cd backend && python -m app.mcp_server
+
+# Streamable HTTP transport (MCP Inspector / browser clients)
+cd backend && python -m app.mcp_server --transport streamable-http --port 8001
+
+# Test with MCP Inspector
+npx -y @modelcontextprotocol/inspector
+```
+
+### Tools
+
+| Tool | Description |
+|---|---|
+| `rag_query` | Swarm multi-agent retrieval — dispatches to Text/Code/Image/Table agents, deduplicates, re-ranks, and runs oracle evaluation. Returns results with human-readable relevance reasoning. |
+| `rag_query_traditional` | Single-retriever baseline (no agents, no oracle). |
+| `rag_compare` | Side-by-side comparison with evaluation metrics (precision, recall, NDCG, MRR) and percentage improvement. |
+| `ingest_sample_data` | Ingest bundled `sample_data/` directory for demo. |
+| `list_all_collections` | List all ChromaDB collections with document counts and modality breakdowns. |
+
+### Resources
+
+| URI | Description |
+|---|---|
+| `rag://collections` | Overview of all collections and statistics. |
+| `rag://collection/{name}` | Detailed stats for a specific collection. |
+
+### Prompts
+
+| Prompt | Description |
+|---|---|
+| `rag_search_prompt` | Guided search — asks the LLM host to query and summarize results with oracle reasoning. |
+| `rag_compare_prompt` | Guided comparison — asks the host to run both approaches and analyze the difference. |
+
+### Client configuration
+
+**VS Code** — already configured in [`.vscode/mcp.json`](.vscode/mcp.json). Open VS Code in this repo and the MCP server appears in the Copilot tool list.
+
+**Claude Desktop** — add to `~/Library/Application Support/Claude/claude_desktop_config.json`:
+
+```json
+{
+  "mcpServers": {
+    "rag-swarm": {
+      "command": "uv",
+      "args": [
+        "--directory", "/ABSOLUTE/PATH/TO/rag-swarm/backend",
+        "run", "python", "-m", "app.mcp_server"
+      ]
+    }
+  }
+}
+```
+
+A root [`mcp.json`](mcp.json) is also provided for generic MCP hosts.
+
+## How It Works
+
+1. **Ingest** — Documents are chunked by modality (text, code, image, table, PDF), embedded via Cloudflare Workers AI, and stored in ChromaDB with provenance metadata
+2. **Query** — The dispatcher fans out the query to specialized swarm agents running in parallel
+3. **Deduplicate & Re-rank** — Overlapping results are merged; a cross-encoder re-ranker orders by relevance
+4. **Oracle** — A two-stage evaluator (fast embedding similarity + LLM reasoning) scores every result, explains why it's relevant or not in plain language, flags provenance drift, and filters noise — the user sees both the results and the oracle's reasoning
+5. **Compare** — Evaluation metrics (precision, recall, NDCG, MRR) prove swarm retrieval outperforms single-retriever RAG
+
+---
+
+## OpenSpec
+
+This project uses [OpenSpec](https://github.com/arananet/rag-swarm/blob/main/CLAUDE.md) for spec-driven development. See [`.openspec/specs/`](.openspec/specs/) for active specifications.
+
+## Quick start (OpenSpec)
 
 ### 1. Configure this repo
 

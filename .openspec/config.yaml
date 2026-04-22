@@ -12,11 +12,11 @@
 # ─────────────────────────────────────────────────────────────────────────────
 
 project:
-  name: "{{PROJECT_NAME}}"
-  owner: "{{GITHUB_OWNER}}"
-  team: "{{TEAM_NAME}}"
-  domain: "{{PROJECT_DOMAIN}}"
-  description: "{{PROJECT_DESCRIPTION}}"
+  name: "rag-swarm"
+  owner: "arananet"
+  team: "Eduardo Arana"
+  domain: "ai-research"
+  description: "Swarm agent RAG system with multi-agent vector retrieval, oracle evaluation, and visual similarity UI"
 
 spec:
   required_fields:
@@ -36,7 +36,7 @@ spec:
 
 testing:
   require_tests: true
-  test_command: "{{TEST_COMMAND}}"
+  test_command: "pytest"
   coverage_threshold: null
   fail_on_missing_tests: true
 
