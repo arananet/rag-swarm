@@ -68,6 +68,30 @@ flowchart TB
 - **Cloudflare Workers AI** — all inference (embeddings, LLM, VLM, re-ranker) via Cloudflare REST API — no local GPU needed
 - **Semantic query cache** — in-memory cache keyed by query embedding cosine similarity; repeat or near-duplicate queries skip all downstream API calls and return instantly
 
+## Frontend
+
+The React UI provides a full visual dashboard for querying, comparing retrieval approaches, and inspecting oracle reasoning.
+
+### Comparison Dashboard
+
+Swarm vs Traditional metrics (Precision, Recall, NDCG, MRR), bar chart and radar chart, pipeline step visualization, and active agent status.
+
+![Comparison Dashboard](screenshots/comparison-dashboard.png)
+
+### Results Side-by-Side
+
+Swarm agent results (left) with oracle verdicts vs Traditional retriever results (right), showing chunk content, scores, modality tags, and source metadata.
+
+![Results Side-by-Side](screenshots/results-side-by-side.png)
+
+### Oracle Verdicts
+
+Per-chunk oracle evaluation with pass/fail status, relevance scores, and human-readable reasoning for every result.
+
+![Oracle Verdicts](screenshots/oracle-verdicts.png)
+
+---
+
 ## Quick Start
 
 ```bash
