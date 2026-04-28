@@ -48,3 +48,30 @@ export async function getCollections() {
   const res = await fetch(`${API}/collections`);
   return res.json();
 }
+
+export async function getWikiPages(collection = 'default') {
+  const res = await fetch(`${API}/wiki/${encodeURIComponent(collection)}/pages`);
+  return res.json();
+}
+
+export async function getWikiPage(slug, collection = 'default') {
+  const res = await fetch(`${API}/wiki/${encodeURIComponent(collection)}/pages/${encodeURIComponent(slug)}`);
+  return res.json();
+}
+
+export async function getWikiIndex(collection = 'default') {
+  const res = await fetch(`${API}/wiki/${encodeURIComponent(collection)}/index`);
+  return res.json();
+}
+
+export async function getWikiLog(collection = 'default') {
+  const res = await fetch(`${API}/wiki/${encodeURIComponent(collection)}/log`);
+  return res.json();
+}
+
+export async function postWikiLint(collection = 'default') {
+  const res = await fetch(`${API}/wiki/${encodeURIComponent(collection)}/lint`, {
+    method: 'POST',
+  });
+  return res.json();
+}

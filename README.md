@@ -11,7 +11,7 @@
 
 Exposed as both a REST API and an **MCP server** (Model Context Protocol, spec 2025-11-25), so any MCP-compatible host — Claude Desktop, VS Code Copilot, Claude Code — can query the knowledge base directly.
 
-Inspired by [Karpathy's LLM Wiki](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f) three-layer architecture, adapted for swarm-based vector retrieval with enterprise evaluation.
+Inspired by [Karpathy's LLM Wiki](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f) three-layer architecture — **raw sources → persistent wiki → schema** — adapted for swarm-based vector retrieval with enterprise evaluation. Unlike standard RAG (where the LLM rediscovers knowledge from scratch on every query), rag-swarm incrementally builds and maintains a persistent wiki layer: on every ingest the LLM synthesises source documents into interlinked markdown pages that accumulate knowledge across ingestions and are served directly on queries.
 
 ---
 
@@ -19,20 +19,42 @@ Inspired by [Karpathy's LLM Wiki](https://gist.github.com/karpathy/442a6bf555914
 
 ```mermaid
 flowchart TB
-    subgraph Ingestion
-        U[User uploads<br/>text / PDF / image / code] --> IP[Ingest Pipeline]
+    subgraph Layer1["Layer 1 — Raw Sources (immutable)"]
+        U[User uploads<br/>text / PDF / image / code]
+    end
+
+    subgraph Layer3["Layer 3 — Schema"]
+        SCH[wiki/SCHEMA.md<br/>conventions · page types · cross-ref rules]
+    end
+
+    subgraph Layer2["Layer 2 — Persistent Wiki (LLM-maintained)"]
+        direction LR
+        WM[WikiManager<br/>LLM synthesises on every ingest]
+        IDX[index.md<br/>page catalog]
+        LOG[log.md<br/>append-only history]
+        WP[wiki/collection/*.md<br/>entity · concept · summary pages]
+        WM --> IDX & LOG & WP
+    end
+
+    subgraph Ingestion["Ingest Pipeline"]
+        U --> IP[Ingest Pipeline]
         IP --> TC[Text Chunker]
         IP --> PC[PDF Extractor]
         IP --> IC[Image Captioner<br/>CLIP embeddings]
         IP --> CC[Code Chunker]
         TC & PC & IC & CC --> VDB[(ChromaDB<br/>Vector Store)]
+        TC & PC & IC & CC --> WM
     end
 
     subgraph Cache["Semantic Query Cache"]
         Q[User Query] --> EMB[Embed Query]
         EMB --> CK{Cosine sim ≥ 0.95?}
         CK -- "cache hit" --> CR[Cached Response<br/>instant return]
-        CK -- "cache miss" --> D
+        CK -- "cache miss" --> WQ & D
+    end
+
+    subgraph WikiQuery["Wiki Retrieval (layer 2 first)"]
+        WQ[Scan index.md<br/>keyword match] --> RP[Relevant wiki pages<br/>pre-synthesised knowledge]
     end
 
     subgraph Swarm["Swarm Agent Pool"]
@@ -45,27 +67,37 @@ flowchart TB
 
     subgraph Oracle["Oracle Evaluation"]
         TA & CA & IA & TBA --> O[Oracle Agent<br/>LLM + Embeddings]
-        O --> |"score, reason & filter"| R[Filtered Results +<br/>Human-Readable Verdicts]
+        O --> |"score, reason & filter"| R[Filtered Chunks +<br/>Human-Readable Verdicts]
         O --> |"metrics"| E[Evaluation<br/>Precision · Recall · NDCG · MRR]
         R --> CS[Store in Cache]
     end
 
-    subgraph UI["React UI"]
-        R --> VS[Vector Space 2D]
-        R --> SC[Similarity Scores]
-        E --> CMP[Swarm vs Traditional<br/>Comparison]
+    subgraph Response["Response"]
+        RP --> RESP[wiki_pages + results<br/>synthesised knowledge first,<br/>raw chunks second]
+        R --> RESP
     end
 
     subgraph MCP["MCP Server (2025-11-25)"]
-        R --> MCT[Tools: rag_query · rag_compare · ...]
-        R --> MCR[Resources: rag://collections]
-        R --> MCP2[Prompts: rag-search · rag-compare]
+        RESP --> MCT[Tools: rag_query · wiki_get_page · ingest_text · ...]
+        RESP --> MCR[Resources: rag://collections · rag://wiki/schema]
         MCT --> HOST[Claude Desktop · VS Code · Any MCP Host]
     end
+
+    subgraph AgentMesh["External Agent Mesh (consumer)"]
+        OA[Orchestrator Agent]
+        RA[Research Agent<br/>follows [[refs]] via wiki_get_page]
+        SA[Synthesis Agent<br/>composes from wiki_pages]
+        WA[Writer Agent<br/>calls ingest_text → updates wiki]
+        OA --> RA & SA & WA
+    end
+
+    HOST --> OA
+    WP -.->|"fast path — no embeddings"| RA
 ```
 
 ## Key Features
 
+- **Karpathy three-layer architecture** — raw sources → persistent LLM-maintained wiki → schema; knowledge compounds across ingestions instead of being re-derived on every query
 - **Multimodal ingestion** — text, PDF, images, code files with modality-specific chunking
 - **Swarm retrieval** — parallel specialized agents instead of single-retriever RAG
 - **Oracle evaluation** — two-stage (embedding + LLM) relevance scoring that explains its reasoning back to the user, filters noise, and flags provenance drift
@@ -120,13 +152,18 @@ npm install && npm run dev
 
 | Endpoint | Method | Description |
 |---|---|---|
-| `/ingest` | POST | Upload and index documents (multimodal) |
-| `/query` | POST | Swarm agent retrieval with oracle evaluation |
+| `/ingest` | POST | Upload and index documents (multimodal); triggers wiki synthesis |
+| `/query` | POST | Swarm agent retrieval with oracle evaluation; returns `wiki_pages` + chunk results |
 | `/query-traditional` | POST | Single-retriever baseline for comparison |
 | `/compare` | POST | Side-by-side swarm vs traditional with metrics |
 | `/collections` | GET | List indexed collections and stats |
 | `/cache/stats` | GET | Cache hit/miss counts, hit rate, config |
 | `/cache/clear` | DELETE | Evict all cached entries |
+| `/wiki/{collection}/pages` | GET | List all wiki page slugs |
+| `/wiki/{collection}/pages/{slug}` | GET | Read a single wiki page |
+| `/wiki/{collection}/index` | GET | Read the wiki index (page catalog) |
+| `/wiki/{collection}/log` | GET | Read the chronological ingest/query log |
+| `/wiki/{collection}/lint` | POST | LLM health-check: contradictions, orphans, stale claims |
 
 ### Example: Ingest sample data
 
@@ -378,6 +415,162 @@ curl -s -X DELETE http://localhost:8000/cache/clear | python3 -m json.tool
 
 ---
 
+## Persistent Wiki (Karpathy layer 2)
+
+Standard RAG rediscovers knowledge from scratch on every query. rag-swarm adds a
+**wiki layer** between raw sources and queries: on every ingest the LLM reads the
+source, extracts key entities and concepts, and writes interlinked markdown pages
+into `backend/wiki/<collection>/`. Knowledge compounds across ingestions — the
+cross-references are already there, the synthesis already reflects everything
+ingested so far.
+
+```mermaid
+flowchart LR
+    SRC[New source<br/>ingested] --> CHUNK[Chunk + embed<br/>→ ChromaDB]
+    SRC --> LLM[LLM reads source<br/>extracts entities/concepts]
+    LLM --> WP[Writes/updates<br/>wiki pages]
+    WP --> IDX[Rebuilds index.md]
+    WP --> LOG[Appends to log.md]
+    Q[Query] --> WIDX[Scans index.md<br/>keyword match]
+    WIDX --> RWP[Returns relevant<br/>wiki pages]
+    Q --> SWARM[Swarm agents<br/>raw chunk retrieval]
+    RWP & SWARM --> RESP[Response:<br/>wiki_pages + results]
+```
+
+The three layers map directly to Karpathy's pattern:
+
+| Layer | In rag-swarm | Karpathy's description |
+|---|---|---|
+| Raw sources | `sample_data/`, uploaded files | Immutable — the LLM reads but never modifies |
+| Wiki | `backend/wiki/<collection>/*.md` | LLM-owned; created/updated on every ingest |
+| Schema | `backend/wiki/SCHEMA.md` | Conventions for page types, cross-refs, operations |
+
+### Wiki endpoints
+
+```bash
+# List all wiki pages for a collection
+curl http://localhost:8000/wiki/default/pages
+
+# Read a specific page
+curl http://localhost:8000/wiki/default/pages/swarm-intelligence
+
+# View the page catalog (index.md)
+curl http://localhost:8000/wiki/default/index
+
+# View the chronological ingest log
+curl http://localhost:8000/wiki/default/log
+
+# LLM health-check: contradictions, orphans, stale claims
+curl -X POST http://localhost:8000/wiki/default/lint | python3 -m json.tool
+```
+
+### Wiki context in query responses
+
+Queries now return a `wiki_pages` field alongside `results`:
+
+```json
+{
+    "query": "what is swarm intelligence?",
+    "wiki_pages": [
+        {
+            "slug": "swarm-intelligence",
+            "title": "Swarm Intelligence",
+            "content": "# Swarm Intelligence\n\nSwarm intelligence refers to the collective behaviour...\n\nRelated: [[oracle-agent]], [[swarm-rag-architecture]]\n\n*Source: swarm-intelligence.md*",
+            "collection": "default"
+        }
+    ],
+    "results": ["...raw chunk results..."],
+    "oracle_verdicts": ["..."]
+}
+```
+
+The wiki pages are pre-synthesised — they already contain cross-references and accumulated knowledge from all prior ingestions. The raw `results` underneath them provide source provenance and fine-grained chunk retrieval.
+
+---
+
+## Agent Mesh Consumption
+
+The wiki layer is designed to be consumed by agents — it is more valuable for agents than for humans. Three properties make it agent-friendly by default:
+
+**Token budget** — A pre-synthesised wiki page is already compressed. The LLM did the distillation at ingest time, not at query time. An agent calling `/query` receives the synthesis first and raw evidence second, and can decide how deep to go without burning context on unfiltered chunks.
+
+**Graph traversal** — The `[[cross-reference]]` links inside wiki pages let agents navigate the knowledge graph without extra embedding calls:
+
+```
+Agent reads:  GET /wiki/default/pages/swarm-intelligence
+Agent sees:   Related: [[oracle-agent]], [[vector-databases]]
+Agent follows: GET /wiki/default/pages/oracle-agent
+→ zero embedding calls, zero ChromaDB ops — plain file read
+```
+
+**Schema as ontology** — `SCHEMA.md` describes what kinds of pages exist (entity, concept, summary) and the cross-reference rules. An agent can read it once and plan its entire retrieval strategy before making a single query.
+
+### Two agent roles
+
+**Reader agents** (most common) call `/query` or the `rag_query` MCP tool. They receive `wiki_pages` (fast, cheap, already cross-linked) and `results` (scored chunks, provenance). The wiki answers *what is known*; the chunks answer *where it came from*. Agents can trust the wiki for orientation and only descend to chunks when accuracy or provenance matters.
+
+**Writer agents** (less common, powerful) call `/ingest` or the `ingest_text` MCP tool to add new sources. The wiki updates automatically — every subsequent reader agent gets the updated synthesis. This is how knowledge compounds across agent interactions without any human involvement.
+
+### Agent mesh architecture
+
+```mermaid
+flowchart TB
+    subgraph AgentMesh["External Agent Mesh"]
+        OA[Orchestrator Agent<br/>plans and delegates]
+        RA[Research Agent<br/>deep-dives into evidence]
+        SA[Synthesis Agent<br/>writes answers]
+        VA[Validation Agent<br/>checks provenance]
+    end
+
+    subgraph Interface["rag-swarm interface"]
+        MCP[MCP Server<br/>tools + resources]
+        REST[REST API<br/>/query /wiki/*]
+    end
+
+    subgraph Knowledge["Knowledge layers"]
+        WIKI[Wiki pages<br/>synthesised, cross-linked<br/>zero-cost reads]
+        CHUNKS[Raw chunks<br/>ChromaDB, scored<br/>provenance]
+        SCHEMA[SCHEMA.md<br/>ontology for agents]
+        LOG[log.md<br/>audit trail]
+    end
+
+    OA -->|"rag_query: orient on topic"| MCP
+    RA -->|"wiki_get_page: follow [[refs]]"| MCP
+    SA -->|"wiki_pages + results → compose answer"| MCP
+    VA -->|"GET /wiki/default/log"| REST
+
+    MCP --> WIKI & CHUNKS
+    REST --> WIKI & SCHEMA & LOG
+```
+
+### Fast path for agent meshes
+
+When agents only need synthesised knowledge (no provenance required), they can skip the swarm entirely. The wiki endpoints return instantly — no embedding call, no ChromaDB, no oracle LLM call:
+
+```bash
+# Agent fast path — wiki only, ~5ms
+curl http://localhost:8000/wiki/default/pages/swarm-intelligence
+
+# Agent full path — wiki + swarm + oracle, ~500ms
+curl -X POST http://localhost:8000/query \
+  -d '{"query": "swarm intelligence", "collection": "default"}'
+```
+
+For a high-QPS agent mesh, route knowledge-oriented queries to the wiki endpoints and reserve the full `/query` pipeline for cases that require fresh evidence retrieval.
+
+### What the agent mesh still needs
+
+The following MCP tools are planned to complete the agent-mesh interface:
+
+| Planned tool | What it enables |
+|---|---|
+| `wiki_get_page` | Agent graph traversal without REST calls |
+| `wiki_get_schema` | Agent reads the ontology before planning |
+| `wiki_follow_refs` | Batch-resolve `[[slug]]` cross-references in one call |
+| `ingest_text` | Agent can write to the knowledge base, not just read |
+
+---
+
 ## MCP Server
 
 The RAG Swarm system is also exposed as an **MCP server** (Model Context Protocol, spec 2025-11-25) so any compatible host can use it as a tool.
@@ -399,13 +592,17 @@ npx -y @modelcontextprotocol/inspector
 
 | Tool | Description |
 |---|---|
-| `rag_query` | Swarm multi-agent retrieval — dispatches to Text/Code/Image/Table agents, deduplicates, re-ranks, and runs oracle evaluation. Returns results with human-readable relevance reasoning. |
+| `rag_query` | Swarm multi-agent retrieval — dispatches to Text/Code/Image/Table agents, deduplicates, re-ranks, and runs oracle evaluation. Returns `wiki_pages` (pre-synthesised) + `results` (scored chunks). |
 | `rag_query_traditional` | Single-retriever baseline (no agents, no oracle). |
 | `rag_compare` | Side-by-side comparison with evaluation metrics (precision, recall, NDCG, MRR) and percentage improvement. |
 | `ingest_sample_data` | Ingest bundled `sample_data/` directory for demo. |
 | `list_all_collections` | List all ChromaDB collections with document counts and modality breakdowns. |
 | `cache_stats` | Return semantic query cache statistics (hits, misses, hit rate, config). |
 | `cache_clear` | Clear all entries from the semantic query cache. |
+| `wiki_get_page` | *(planned)* Read a single wiki page by slug — enables agent graph traversal via `[[cross-references]]` without REST calls. |
+| `wiki_get_schema` | *(planned)* Return `SCHEMA.md` — lets agents learn the ontology (page types, cross-ref rules) before planning retrieval. |
+| `wiki_follow_refs` | *(planned)* Batch-resolve `[[slug]]` cross-references found in a wiki page in a single call. |
+| `ingest_text` | *(planned)* Ingest raw text directly — writer agents can add to the knowledge base and trigger wiki synthesis. |
 
 ### Resources
 
@@ -413,6 +610,7 @@ npx -y @modelcontextprotocol/inspector
 |---|---|
 | `rag://collections` | Overview of all collections and statistics. |
 | `rag://collection/{name}` | Detailed stats for a specific collection. |
+| `rag://wiki/{collection}/schema` | *(planned)* `SCHEMA.md` ontology — page types, cross-ref rules, operation descriptions. Agents read this once to plan retrieval. |
 
 ### Prompts
 
@@ -446,12 +644,15 @@ A root [`mcp.json`](mcp.json) is also provided for generic MCP hosts.
 ## How It Works
 
 1. **Ingest** — Documents are chunked by modality (text, code, image, table, PDF), embedded via Cloudflare Workers AI, and stored in ChromaDB with provenance metadata
-2. **Query** — The incoming query is embedded (single API call) and checked against the **semantic cache**. If a similar query was seen before (cosine similarity ≥ 0.95), the cached response is returned instantly — skipping steps 3–5
-3. **Dispatch** — On cache miss, the dispatcher fans out the query to specialized swarm agents running in parallel
-4. **Deduplicate & Re-rank** — Overlapping results are merged; a cross-encoder re-ranker orders by relevance
-5. **Oracle** — A two-stage evaluator (fast embedding similarity + LLM reasoning) scores every result, explains why it's relevant or not in plain language, flags provenance drift, and filters noise — the user sees both the results and the oracle's reasoning
-6. **Cache & Return** — The fresh response is stored in the cache (with TTL + LRU eviction) and returned to the user
-7. **Compare** — Evaluation metrics (precision, recall, NDCG, MRR) prove swarm retrieval outperforms single-retriever RAG
+2. **Wiki synthesis** — After chunking, the LLM reads each source and writes/updates interlinked markdown pages in `backend/wiki/<collection>/` — entity pages, concept pages, summary pages. It updates `index.md` and appends to `log.md`. Knowledge accumulates and cross-references are maintained across every ingestion. This is the Karpathy layer: knowledge is compiled once, not re-derived per query
+3. **Query** — The incoming query is embedded (single API call) and checked against the **semantic cache**. If a similar query was seen before (cosine similarity ≥ 0.95), the cached response is returned instantly — skipping steps 4–7
+4. **Wiki retrieval** — On cache miss, the wiki `index.md` is scanned and the most relevant pre-synthesised wiki pages are returned directly — these already reflect accumulated cross-ingestion knowledge
+5. **Dispatch** — Simultaneously, the dispatcher fans out the query to specialized swarm agents running in parallel for raw chunk retrieval
+6. **Deduplicate & Re-rank** — Overlapping results are merged; a cross-encoder re-ranker orders by relevance
+7. **Oracle** — A two-stage evaluator (fast embedding similarity + LLM reasoning) scores every chunk, explains why it's relevant or not in plain language, flags provenance drift, and filters noise
+8. **Cache & Return** — The fresh response (wiki pages + oracle-filtered chunks) is stored in cache and returned. The response has two layers: synthesised `wiki_pages` first, raw `results` second
+9. **Compare** — Evaluation metrics (precision, recall, NDCG, MRR) prove swarm retrieval outperforms single-retriever RAG
+10. **Lint** — POST `/wiki/{collection}/lint` to ask the LLM to health-check the wiki for contradictions, orphan pages, and stale claims
 
 ---
 

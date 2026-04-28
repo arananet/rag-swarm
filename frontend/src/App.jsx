@@ -4,13 +4,14 @@ import {
   Search, Upload, Database, Zap, Shield, BarChart3,
   FileText, Code, Image, Table, FileDown, ChevronRight,
   CheckCircle2, XCircle, Loader2, Layers, ArrowRight,
-  Sparkles, Eye,
+  Sparkles, Eye, BookOpen,
 } from 'lucide-react';
 import VectorViz from './components/VectorViz.jsx';
 import MetricsComparison from './components/MetricsComparison.jsx';
 import ResultCard from './components/ResultCard.jsx';
 import OracleVerdicts from './components/OracleVerdicts.jsx';
-import { compare, ingestFiles, ingestSample, getCollections } from './api/client.js';
+import WikiPanel from './components/WikiPanel.jsx';
+import { compare, querySwarm, ingestFiles, ingestSample, getCollections } from './api/client.js';
 
 const AGENT_ICONS = {
   TextAgent: FileText,
@@ -39,6 +40,7 @@ const PIPELINE_STAGES = [
 export default function App() {
   const [query, setQuery] = useState('');
   const [results, setResults] = useState(null);
+  const [wikiPages, setWikiPages] = useState([]);
   const [loading, setLoading] = useState(false);
   const [ingesting, setIngesting] = useState(false);
   const [tab, setTab] = useState('compare');
@@ -62,8 +64,12 @@ export default function App() {
     }
 
     try {
-      const data = await compare(query, collection, topK, threshold);
+      const [data, swarmData] = await Promise.all([
+        compare(query, collection, topK, threshold),
+        querySwarm(query, collection, topK, threshold),
+      ]);
       setResults(data);
+      setWikiPages(swarmData.wiki_pages || []);
       setPipelineStage('done');
       setStatus(
         `${data.swarm.filtered_count} swarm results from ${data.swarm.total_candidates} candidates`
@@ -435,6 +441,15 @@ export default function App() {
                   <Shield size={14} /> Oracle
                   <span className="tab-count">{verdicts.length}</span>
                 </button>
+                <button
+                  className={`tab ${tab === 'wiki' ? 'active' : ''}`}
+                  onClick={() => setTab('wiki')}
+                >
+                  <BookOpen size={14} /> Wiki
+                  {wikiPages.length > 0 && (
+                    <span className="tab-count">{wikiPages.length}</span>
+                  )}
+                </button>
               </div>
 
               {/* Tab Content */}
@@ -519,6 +534,18 @@ export default function App() {
                     transition={{ duration: 0.15 }}
                   >
                     <OracleVerdicts verdicts={verdicts} />
+                  </motion.div>
+                )}
+
+                {tab === 'wiki' && (
+                  <motion.div
+                    key="wiki"
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                    exit={{ opacity: 0 }}
+                    transition={{ duration: 0.15 }}
+                  >
+                    <WikiPanel wikiPages={wikiPages} />
                   </motion.div>
                 )}
               </AnimatePresence>

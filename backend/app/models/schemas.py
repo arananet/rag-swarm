@@ -33,6 +33,7 @@ class IngestResponse(BaseModel):
     documents_processed: int
     chunks_created: int
     modalities: list[str]
+    wiki_pages_written: list[str] = Field(default_factory=list)
 
 
 class QueryRequest(BaseModel):
@@ -58,6 +59,21 @@ class OracleVerdict(BaseModel):
     passed: bool
 
 
+class WikiPage(BaseModel):
+    slug: str
+    title: str
+    content: str
+    collection: str
+
+
+class WikiIngestResult(BaseModel):
+    pages_written: list[str]
+
+
+class WikiLintResult(BaseModel):
+    report: str
+
+
 class SwarmQueryResponse(BaseModel):
     query: str
     results: list[RetrievalResult]
@@ -65,6 +81,7 @@ class SwarmQueryResponse(BaseModel):
     total_candidates: int
     filtered_count: int
     agents_used: list[str]
+    wiki_pages: list[WikiPage] = Field(default_factory=list)
     cache_hit: bool = False
     cache_similarity: float | None = None
 

@@ -15,6 +15,7 @@ from app.embeddings import caption_image, chunk_id, embed_texts
 from app.models.schemas import DocumentChunk, Modality
 from app.provenance import ProvenanceTracker
 from app.vectorstore import add_documents
+from app.wiki.manager import wiki_manager
 
 # ---------- Chunking strategies per modality ----------
 
@@ -330,6 +331,20 @@ def ingest_file(filepath: Path, collection: str = "default") -> list[DocumentChu
 
     for chunk, emb in zip(chunks, embeddings):
         chunk.embedding = emb
+
+    # --- Wiki synthesis (Karpathy layer 2) ---
+    # Derive a readable text representation of this source to feed the wiki LLM.
+    # For text/pdf/code sources use joined chunk text; for images use the caption.
+    source_text = " ".join(c.content for c in chunks)
+    try:
+        wiki_manager.synthesize_source(
+            source_text=source_text,
+            filename=source_name,
+            collection=collection,
+        )
+    except Exception:
+        # Wiki synthesis is best-effort; never block ingestion on LLM failures
+        pass
 
     return chunks
 
