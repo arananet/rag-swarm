@@ -85,14 +85,14 @@ flowchart TB
 
     subgraph AgentMesh["External Agent Mesh (consumer)"]
         OA[Orchestrator Agent]
-        RA[Research Agent<br/>follows [[refs]] via wiki_get_page]
+        RA[Research Agent<br/>follows cross-refs via wiki_get_page]
         SA[Synthesis Agent<br/>composes from wiki_pages]
-        WA[Writer Agent<br/>calls ingest_text → updates wiki]
+        WA[Writer Agent<br/>calls ingest_text, updates wiki]
         OA --> RA & SA & WA
     end
 
     HOST --> OA
-    WP -.->|"fast path — no embeddings"| RA
+    WP -.->|fast path - no embeddings| RA
 ```
 
 ## Key Features
@@ -535,7 +535,7 @@ flowchart TB
     end
 
     OA -->|"rag_query: orient on topic"| MCP
-    RA -->|"wiki_get_page: follow [[refs]]"| MCP
+    RA -->|"wiki_get_page: follow cross-refs"| MCP
     SA -->|"wiki_pages + results → compose answer"| MCP
     VA -->|"GET /wiki/default/log"| REST
 
