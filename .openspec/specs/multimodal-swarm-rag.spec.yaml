@@ -32,6 +32,7 @@ test_plan:
   - "Unit test: multimodal document ingestion — each format produces correct chunks and embeddings in ChromaDB"
   - "Unit test: each swarm agent retrieves only documents matching its modality specialization"
   - "Unit test: oracle agent filters results below relevance threshold and ranks by score"
+  - "Unit test: oracle scoring — LLM reasoning containing 'NOT RELEVANT' must decrease blended_score, not increase it (regression: 'NOT RELEVANT' is a substring of 'RELEVANT'; wrong check order misclassifies all negative verdicts as positive)"
   - "Unit test: evaluation metrics (precision, recall, NDCG, MRR) compute correctly against known ground truth"
   - "Integration test: full query pipeline — ingest docs, run swarm query, get oracle-filtered results"
   - "Integration test: /compare endpoint returns both swarm and traditional results with evaluation metrics"

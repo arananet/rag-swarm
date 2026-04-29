@@ -100,7 +100,7 @@ flowchart TB
 - **Karpathy three-layer architecture** — raw sources → persistent LLM-maintained wiki → schema; knowledge compounds across ingestions instead of being re-derived on every query
 - **Multimodal ingestion** — text, PDF, images, code files with modality-specific chunking
 - **Swarm retrieval** — parallel specialized agents instead of single-retriever RAG
-- **Oracle evaluation** — two-stage (embedding + LLM) relevance scoring that explains its reasoning back to the user, filters noise, and flags provenance drift
+- **Oracle evaluation** — two-stage (embedding + LLM) relevance scoring that explains its reasoning back to the user, filters noise, and flags provenance drift; the LLM is asked to emit `RELEVANT` or `NOT RELEVANT` and the label is matched negation-first to avoid the substring trap
 - **MCP server** — Model Context Protocol (2025-11-25) interface with tools, resources, and prompts — plug into Claude Desktop, VS Code, or any MCP host
 - **Visual proof** — 2D vector projections, similarity heatmaps, side-by-side comparison
 - **Production-shaped prototype** — configurable agent pools, async processing, semantic cache, evaluation pipeline, CodeQL/SAST, MCP interface. Auth, multi-tenancy, deployment docs, and data retention policy are not included — add those before going to production
@@ -651,7 +651,7 @@ A root [`mcp.json`](mcp.json) is also provided for generic MCP hosts.
 4. **Wiki retrieval** — On cache miss, the wiki `index.md` is scanned and the most relevant pre-synthesised wiki pages are returned directly — these already reflect accumulated cross-ingestion knowledge
 5. **Dispatch** — Simultaneously, the dispatcher fans out the query to specialized swarm agents running in parallel for raw chunk retrieval
 6. **Deduplicate & Re-rank** — Overlapping results are merged; a cross-encoder re-ranker orders by relevance
-7. **Oracle** — A two-stage evaluator (fast embedding similarity + LLM reasoning) scores every chunk, explains why it's relevant or not in plain language, flags provenance drift, and filters noise
+7. **Oracle** — A two-stage evaluator (fast embedding similarity + LLM reasoning) scores every chunk, explains why it's relevant or not in plain language, flags provenance drift, and filters noise. The LLM verdict (`RELEVANT` / `NOT RELEVANT`) adjusts the blended score; `NOT RELEVANT` is matched before `RELEVANT` to avoid the substring misclassification
 8. **Cache & Return** — The fresh response (wiki pages + oracle-filtered chunks) is stored in cache and returned. The response has two layers: synthesised `wiki_pages` first, raw `results` second
 9. **Compare** — Evaluation metrics (precision, recall, NDCG, MRR) compare swarm vs single-retriever retrieval. The swarm's advantage is broader cross-modal recall and per-chunk oracle explanations, not necessarily higher average relevance — the oracle surfaces more candidates across modalities, which can lower the average relevance score while still finding results the single retriever misses
 10. **Lint** — POST `/wiki/{collection}/lint` to ask the LLM to health-check the wiki for contradictions, orphan pages, and stale claims
