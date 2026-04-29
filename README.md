@@ -7,11 +7,11 @@
 [![MCP 2025-11-25](https://img.shields.io/badge/MCP-2025--11--25-8A2BE2)](https://modelcontextprotocol.io/)
 [![Cloudflare Workers AI](https://img.shields.io/badge/powered%20by-Cloudflare%20Workers%20AI-F38020)](https://developers.cloudflare.com/workers-ai/)
 
-**Swarm Agent RAG** — A multimodal retrieval-augmented generation system where specialized swarm agents search a vector database in parallel, and an LLM-powered oracle evaluates every result's relevance, explains its reasoning back to the user, and filters out noise — so you only see what actually answers your question.
+**RAG with a persistent knowledge layer** — On every ingest the LLM synthesises source documents into an interlinked wiki that compounds knowledge across ingestions instead of rediscovering it on every query. A swarm of specialized agents then retrieves from both wiki (pre-synthesised, cross-linked, fast) and raw chunks (fine-grained, provenance) in parallel, with an oracle that evaluates every result's relevance and explains its reasoning back to the user.
 
-Exposed as both a REST API and an **MCP server** (Model Context Protocol, spec 2025-11-25), so any MCP-compatible host — Claude Desktop, VS Code Copilot, Claude Code — can query the knowledge base directly.
+Inspired by [Karpathy's LLM Wiki](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f) three-layer architecture — **raw sources → persistent wiki → schema** — adapted for swarm-based vector retrieval. The durable wiki is the core differentiator: knowledge is compiled once at ingest time, cross-references are already resolved, and every subsequent query benefits from everything ingested before it.
 
-Inspired by [Karpathy's LLM Wiki](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f) three-layer architecture — **raw sources → persistent wiki → schema** — adapted for swarm-based vector retrieval with enterprise evaluation. Unlike standard RAG (where the LLM rediscovers knowledge from scratch on every query), rag-swarm incrementally builds and maintains a persistent wiki layer: on every ingest the LLM synthesises source documents into interlinked markdown pages that accumulate knowledge across ingestions and are served directly on queries.
+Exposed as both a REST API and an **MCP server** (Model Context Protocol, spec 2025-11-25). Core query and collection tools are implemented; wiki-specific MCP tools (`wiki_get_page`, `wiki_get_schema`, `wiki_follow_refs`, `ingest_text`) are planned — see the [MCP section](#mcp-server) for the full status breakdown.
 
 ---
 
@@ -103,7 +103,7 @@ flowchart TB
 - **Oracle evaluation** — two-stage (embedding + LLM) relevance scoring that explains its reasoning back to the user, filters noise, and flags provenance drift
 - **MCP server** — Model Context Protocol (2025-11-25) interface with tools, resources, and prompts — plug into Claude Desktop, VS Code, or any MCP host
 - **Visual proof** — 2D vector projections, similarity heatmaps, side-by-side comparison
-- **Enterprise-ready** — configurable agent pools, async processing, evaluation pipeline
+- **Production-shaped prototype** — configurable agent pools, async processing, semantic cache, evaluation pipeline, CodeQL/SAST, MCP interface. Auth, multi-tenancy, deployment docs, and data retention policy are not included — add those before going to production
 - **Cloudflare Workers AI** — all inference (embeddings, LLM, VLM, re-ranker) via Cloudflare REST API — no local GPU needed
 - **Semantic query cache** — in-memory cache keyed by query embedding cosine similarity; repeat or near-duplicate queries skip all downstream API calls and return instantly
 
@@ -486,6 +486,8 @@ Queries now return a `wiki_pages` field alongside `results`:
 
 The wiki pages are pre-synthesised — they already contain cross-references and accumulated knowledge from all prior ingestions. The raw `results` underneath them provide source provenance and fine-grained chunk retrieval.
 
+> **Current limitations (prototype):** Wiki synthesis uses regex to parse LLM output into page blocks, and appends content when a page already exists. There is no structured output validation, no source-level provenance per claim, no page versioning, and no conflict detection between ingestions. For now, treat wiki pages as a useful but unverified synthesis — trace claims to raw chunks when accuracy matters.
+
 ---
 
 ## Agent Mesh Consumption
@@ -651,7 +653,7 @@ A root [`mcp.json`](mcp.json) is also provided for generic MCP hosts.
 6. **Deduplicate & Re-rank** — Overlapping results are merged; a cross-encoder re-ranker orders by relevance
 7. **Oracle** — A two-stage evaluator (fast embedding similarity + LLM reasoning) scores every chunk, explains why it's relevant or not in plain language, flags provenance drift, and filters noise
 8. **Cache & Return** — The fresh response (wiki pages + oracle-filtered chunks) is stored in cache and returned. The response has two layers: synthesised `wiki_pages` first, raw `results` second
-9. **Compare** — Evaluation metrics (precision, recall, NDCG, MRR) prove swarm retrieval outperforms single-retriever RAG
+9. **Compare** — Evaluation metrics (precision, recall, NDCG, MRR) compare swarm vs single-retriever retrieval. The swarm's advantage is broader cross-modal recall and per-chunk oracle explanations, not necessarily higher average relevance — the oracle surfaces more candidates across modalities, which can lower the average relevance score while still finding results the single retriever misses
 10. **Lint** — POST `/wiki/{collection}/lint` to ask the LLM to health-check the wiki for contradictions, orphan pages, and stale claims
 
 ---
