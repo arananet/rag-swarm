@@ -48,11 +48,15 @@ class OracleAgent:
             # Stage 2: LLM reasoning for borderline cases or high-value results
             if 0.2 <= blended_score <= 0.6 or blended_score >= 0.7:
                 reasoning = self._llm_evaluate(query, result, semantic_sim)
-                # LLM can boost or penalize the blended score
-                if "RELEVANT" in reasoning.upper():
-                    blended_score = min(1.0, blended_score + 0.1)
-                elif "NOT RELEVANT" in reasoning.upper():
+                # LLM can boost or penalize the blended score.
+                # "NOT RELEVANT" must be checked before "RELEVANT" because the
+                # latter is a substring of the former — wrong order causes every
+                # negative verdict to be misclassified as positive.
+                label = reasoning.upper()
+                if "NOT RELEVANT" in label:
                     blended_score = max(0.0, blended_score - 0.15)
+                elif "RELEVANT" in label:
+                    blended_score = min(1.0, blended_score + 0.1)
             else:
                 reasoning = self._fast_reasoning(
                     query, result, semantic_sim, result.score, blended_score
